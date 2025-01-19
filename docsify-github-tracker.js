@@ -12,33 +12,22 @@
       const item = localStorage.getItem(key);
       if (!item) return null;
       
-      const { data, timestamp, etag, lastCheck } = JSON.parse(item);
+      const { data, timestamp, etag } = JSON.parse(item);
       
-      // Only check ETag if enough time passed since last check
-      if (Date.now() - lastCheck < defaultOptions.checkInterval) {
-        return data;
-      }
-
       try {
+        // Use conditional request to check if repo changed
         const response = await fetch(`https://api.github.com/repos/${user}/${repo}`, {
           headers: { 'If-None-Match': etag }
         });
         
-        // Update lastCheck timestamp
-        const cached = JSON.parse(localStorage.getItem(key));
-        cached.lastCheck = Date.now();
-        localStorage.setItem(key, JSON.stringify(cached));
-        
-        if (response.status === 304) {
-          // Content unchanged, use cache regardless of age
-          return data;
+        // If content changed (not 304), invalidate cache
+        if (response.status !== 304) {
+          log('Repository updated, invalidating cache');
+          localStorage.removeItem(key);
+          return null;
         }
         
-        // Content changed, invalidate cache
-        log('Repository updated, invalidating cache');
-        localStorage.removeItem(key);
-        return null;
-        
+        return data;
       } catch (err) {
         log('Error checking repo:', err);
         // Fall back to time-based cache on error
@@ -58,15 +47,13 @@
         localStorage.setItem(key, JSON.stringify({
           data,
           timestamp: Date.now(),
-          lastCheck: Date.now(),
           etag
         }));
       } catch (err) {
         log('Error saving cache:', err);
         localStorage.setItem(key, JSON.stringify({
           data,
-          timestamp: Date.now(),
-          lastCheck: Date.now()
+          timestamp: Date.now()
         }));
       }
     }
