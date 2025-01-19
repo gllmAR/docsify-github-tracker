@@ -71,6 +71,11 @@
     let match;
 
     while ((match = regex.exec(content)) !== null) {
+      // Get parent header level by counting # before the tracker
+      const contentBefore = content.substring(0, match.index);
+      const lastHeaderMatch = contentBefore.match(/.*^(#{1,6})[^#]/m);
+      const parentLevel = lastHeaderMatch ? lastHeaderMatch[1].length : 1;
+      
       const config = {};
       const lines = match[1].split('\n');
       
@@ -83,7 +88,8 @@
 
       matches.push({
         raw: match[0],
-        config: { ...defaultOptions, ...config }
+        config: { ...defaultOptions, ...config },
+        parentLevel
       });
     }
 
@@ -176,19 +182,19 @@
   function formatHeader(user, repo, start, stop) {
     const repoUrl = `https://github.com/${user}/${repo}`;
     const userUrl = `https://github.com/${user}`;
-    let header = `## Repository: [${repo}](${repoUrl}) by [${user}](${userUrl})`;
+    
+    let header = `[${repo}](${repoUrl}) | [${user}](${userUrl})`;
     
     if (start && stop) {
-      // Parse dates for header
       const startTime = parseDateTime(start);
       const stopTime = parseDateTime(stop);
       if (startTime && stopTime) {
         const startDate = new Date(startTime).toLocaleDateString();
         const stopDate = new Date(stopTime).toLocaleDateString();
-        header += `\nEvents from ${startDate} to ${stopDate}`;
+        header += `\n ${startDate} | ${stopDate}`;
       }
     } else {
-      header += `\nLatest events`;
+      header += `\n`;
     }
     
     return header + '\n\n';
@@ -261,7 +267,7 @@
     return key;
   }
 
-  async function fetchEvents(user, repo, limit, start, stop) {
+  async function fetchEvents(user, repo, limit, start, stop, parentLevel = 2) {
     try {
       cache.init();
       const cacheKey = getCacheKey(user, repo, start, stop);
@@ -311,7 +317,7 @@
         });
       }
 
-      const header = formatHeader(user, repo, start, stop);
+      const header = formatHeader(user, repo, start, stop, parentLevel);
       if (filteredEvents.length === 0) {
         const noEvents = `${header}No events found in specified date range`;
         await cache.set(cacheKey, noEvents, user, repo);
@@ -324,7 +330,7 @@
 
     } catch (err) {
       log('Error:', err);
-      return formatHeader(user, repo, start, stop) + `Error: ${err.message}`;
+      return formatHeader(user, repo, start, stop, parentLevel) + `Error: ${err.message}`;
     }
   }
 
@@ -344,7 +350,7 @@
       Promise.all(
         trackers.map(async tracker => {
           const { user, repo, limit, start, stop } = tracker.config;
-          const events = await fetchEvents(user, repo, limit, start, stop);
+          const events = await fetchEvents(user, repo, limit, start, stop, tracker.parentLevel);
           return { raw: tracker.raw, events };
         })
       ).then(results => {

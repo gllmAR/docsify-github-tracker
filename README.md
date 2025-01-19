@@ -30,7 +30,7 @@ debug:true
 start:2025/01/18
 stop:2025/01/20
 ```
-## with date limit before
+## with date before limit 
 
 ```githubtracker
 user:gllmar
@@ -40,7 +40,7 @@ debug:true
 start:2025/01/02
 stop:2025/01/03
 ```
-## with date after before
+## with date in futur 
 
 ```githubtracker
 user:gllmar
