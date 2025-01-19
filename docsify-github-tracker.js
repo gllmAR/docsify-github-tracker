@@ -10,52 +10,46 @@
   const cache = {
     get: async (key, user, repo) => {
       const item = localStorage.getItem(key);
-      if (!item) return null;
-      
-      const { data, timestamp, etag } = JSON.parse(item);
-      
-      try {
-        // Use conditional request to check if repo changed
-        const response = await fetch(`https://api.github.com/repos/${user}/${repo}`, {
-          headers: { 'If-None-Match': etag }
-        });
-        
-        // If content changed (not 304), invalidate cache
-        if (response.status !== 304) {
-          log('Repository updated, invalidating cache');
-          localStorage.removeItem(key);
-          return null;
-        }
-        
-        return data;
-      } catch (err) {
-        log('Error checking repo:', err);
-        // Fall back to time-based cache on error
-        if (Date.now() - timestamp > defaultOptions.cacheTime) {
-          localStorage.removeItem(key);
-          return null;
-        }
-        return data;
+      if (!item) {
+        log('No cache found for key:', key);
+        return null;
       }
+      
+      const cached = JSON.parse(item);
+      const now = Date.now();
+      
+      // Check if cache is still valid
+      if (now - cached.timestamp < defaultOptions.cacheTime) {
+        log('Using valid cache:', {
+          key,
+          age: (now - cached.timestamp) / 1000,
+          maxAge: defaultOptions.cacheTime / 1000
+        });
+        return cached.data;
+      }
+      
+      // Cache expired
+      log('Cache expired:', {
+        key,
+        age: (now - cached.timestamp) / 1000,
+        maxAge: defaultOptions.cacheTime / 1000
+      });
+      localStorage.removeItem(key);
+      return null;
     },
     
     set: async (key, data, user, repo) => {
-      try {
-        const response = await fetch(`https://api.github.com/repos/${user}/${repo}`);
-        const etag = response.headers.get('ETag');
-        
-        localStorage.setItem(key, JSON.stringify({
-          data,
-          timestamp: Date.now(),
-          etag
-        }));
-      } catch (err) {
-        log('Error saving cache:', err);
-        localStorage.setItem(key, JSON.stringify({
-          data,
-          timestamp: Date.now()
-        }));
-      }
+      const cacheData = {
+        data,
+        timestamp: Date.now()
+      };
+      
+      log('Setting cache:', {
+        key,
+        timestamp: new Date(cacheData.timestamp).toISOString()
+      });
+      
+      localStorage.setItem(key, JSON.stringify(cacheData));
     }
   };
 
@@ -98,46 +92,82 @@
     return matches;
   }
 
+  function getEventIcon(type) {
+    const icons = {
+      PushEvent: { emoji: '🚀', label: 'Push to repository' },
+      CreateEvent: { emoji: '🌿', label: 'Create branch/tag' },
+      DeleteEvent: { emoji: '🗑️', label: 'Delete branch/tag' },
+      PullRequestEvent: { emoji: '🔀', label: 'Pull Request' },
+      IssuesEvent: { emoji: '🎯', label: 'Issue' },
+      IssueCommentEvent: { emoji: '💬', label: 'Comment' },
+      ReleaseEvent: { emoji: '📦', label: 'Release' },
+      WatchEvent: { emoji: '⭐', label: 'Star' },
+      ForkEvent: { emoji: '🍴', label: 'Fork' },
+      PublicEvent: { emoji: '🌍', label: 'Made public' }
+    };
+    return icons[type] || { emoji: '📝', label: 'Other event' };
+  }
+
+  function getActionIcon(action) {
+    const icons = {
+      opened: { emoji: '➕', label: 'Opened' },
+      closed: { emoji: '✅', label: 'Closed' },
+      reopened: { emoji: '🔄', label: 'Reopened' },
+      merged: { emoji: '🔗', label: 'Merged' },
+      created: { emoji: '🆕', label: 'Created' },
+      deleted: { emoji: '🗑️', label: 'Deleted' },
+      commented: { emoji: '💬', label: 'Commented' }
+    };
+    return icons[action] || { emoji: action, label: action };
+  }
+
   function formatEvent(event) {
     try {
-      const date = new Date(event.created_at).toLocaleString();
-      const type = event.type.replace('Event', '');
-      let details = '';
+      const date = new Date(event.created_at).toLocaleString([], { 
+        month: '2-digit', 
+        day: '2-digit',
+        hour: '2-digit', 
+        minute: '2-digit'
+      });
+      
+      const icon = getEventIcon(event.type);
       const repoUrl = event.repo.url.replace('api.github.com/repos', 'github.com');
-      const userUrl = `https://github.com/${event.repo.name.split('/')[0]}`;
-  
-      // Handle different event types
+      let details = '';
+
       switch(event.type) {
         case 'PushEvent':
-          const commits = event.payload.commits.map(commit => 
-            `  - ${commit.message} ([${commit.sha.substring(0,7)}](${repoUrl}/commit/${commit.sha}))`
-          ).join('\n');
-          details = `to \`${event.payload.ref.replace('refs/heads/', '')}\`\n${commits}`;
+          const branch = event.payload.ref.replace('refs/heads/', '');
+          details = `→ \`${branch}\``;
+          if (event.payload.commits && event.payload.commits.length) {
+            const commits = event.payload.commits.map(commit => 
+              `  - ${commit.message} ([${commit.sha.substring(0,7)}](${repoUrl}/commit/${commit.sha}))`
+            ).join('\n');
+            details += `\n${commits}`;
+          }
           break;
-  
+
+        case 'PullRequestEvent':
+          const prAction = getActionIcon(event.payload.action);
+          details = `<span title="${prAction.label}">${prAction.emoji}</span> [#${event.payload.pull_request.number}](${repoUrl}/pull/${event.payload.pull_request.number}) ${event.payload.pull_request.title}`;
+          break;
+
+        case 'IssuesEvent':
+          const issueAction = getActionIcon(event.payload.action);
+          details = `${issueAction} [#${event.payload.issue.number}](${repoUrl}/issues/${event.payload.issue.number}) ${event.payload.issue.title}`;
+          break;
+
+        case 'IssueCommentEvent':
+          details = `💬 [#${event.payload.issue.number}](${repoUrl}/issues/${event.payload.issue.number}) ${event.payload.comment.body.substring(0,60)}...`;
+          break;
+
         case 'CreateEvent':
           const refType = event.payload.ref_type;
           const ref = event.payload.ref;
-          details = refType === 'branch' ? 
-            ` \`${ref}\`` : 
-            ` ${refType}${ref ? ': ' + ref : ''}`;
-          break;
-  
-        case 'IssuesEvent':
-          details = ` [#${event.payload.issue.number}](${repoUrl}/issues/${event.payload.issue.number}) ${event.payload.action}: ${event.payload.issue.title}`;
-          break;
-  
-        case 'PullRequestEvent':
-          details = ` [#${event.payload.pull_request.number}](${repoUrl}/pull/${event.payload.pull_request.number}) ${event.payload.action}: ${event.payload.pull_request.title}`;
-          break;
-  
-        case 'IssueCommentEvent':
-          const issueNum = event.payload.issue.number;
-          details = ` on [#${issueNum}](${repoUrl}/issues/${issueNum}): ${event.payload.comment.body.substring(0, 60)}...`;
+          details = `${refType}${ref ? `: \`${ref}\`` : ''}`;
           break;
       }
-  
-      return `- ${date}: ${type}${details}`;
+
+      return `- <span title="${icon.label}">${icon.emoji}</span> ${date} ${details}\n`;
     } catch (err) {
       log('Error formatting event:', err);
       return '';
@@ -245,16 +275,58 @@
       log('Fetching from:', url);
 
       const response = await fetch(url);
-      const allEvents = await response.json();
       
-      let filteredEvents = allEvents;
+      // Handle rate limiting
+      if (response.status === 403) {
+        const rateLimitReset = response.headers.get('X-RateLimit-Reset');
+        const resetDate = new Date(rateLimitReset * 1000);
+        const resetMessage = `Rate limit exceeded. Resets at ${resetDate.toLocaleString()}`;
+        log('Rate limit exceeded:', resetMessage);
+        
+        const error = `## GitHub API Rate Limit Exceeded
+        
+The GitHub API rate limit has been exceeded. Please try again after ${resetDate.toLocaleString()}.
+
+To avoid this:
+- Use authenticated requests
+- Cache results locally
+- Reduce request frequency`;
+
+        await cache.set(cacheKey, error, user, repo);
+        return error;
+      }
+
+      // Handle other errors
+      if (!response.ok) {
+        throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+      }
+
+      // Continue with existing logic
+      const data = await response.json();
+      // Ensure we have an array of events
+      if (!Array.isArray(data)) {
+        log('API response is not an array:', data);
+        throw new Error('Invalid API response format');
+      }
+
+      let filteredEvents = [...data];
       if (start || stop) {
         const startTime = start ? parseDateTime(start) : 0;
         const stopTime = stop ? parseDateTime(stop) + (24 * 60 * 60 * 1000) : Infinity;
         
-        filteredEvents = allEvents.filter(event => {
+        log('Filtering events:', { 
+          total: filteredEvents.length,
+          startTime,
+          stopTime
+        });
+
+        filteredEvents = filteredEvents.filter(event => {
           const eventTime = new Date(event.created_at).getTime();
           return eventTime >= startTime && eventTime < stopTime;
+        });
+
+        log('Filtered events:', {
+          remaining: filteredEvents.length
         });
       }
 

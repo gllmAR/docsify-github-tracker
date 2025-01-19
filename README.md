@@ -2,6 +2,12 @@
 
 docsify-github-tracker
 
+Include in Docsify `index.html`
+
+```html
+<script src="https://gllmar.github.io/docsify-github-tracker/docsify-github-tracker.js"></script>
+```
+
 latest first
 
 ## By default
