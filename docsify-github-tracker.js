@@ -1,7 +1,62 @@
 (function () {
   const defaultOptions = {
     limit: 50,
-    debug: true
+    debug: true,
+    cacheTime: 5 * 60 * 1000 // 5 minutes
+  };
+
+  // Cache management
+  const cache = {
+    get: async (key, user, repo) => {
+      const item = localStorage.getItem(key);
+      if (!item) return null;
+      
+      const { data, timestamp, etag } = JSON.parse(item);
+      
+      // Check if cache is too old
+      if (Date.now() - timestamp > defaultOptions.cacheTime) {
+        localStorage.removeItem(key);
+        return null;
+      }
+
+      try {
+        // Use conditional request to check if repo changed
+        const response = await fetch(`https://api.github.com/repos/${user}/${repo}`, {
+          headers: { 'If-None-Match': etag }
+        });
+        
+        if (response.status !== 304) {
+          // Content changed, invalidate cache
+          log('Repository updated, invalidating cache');
+          localStorage.removeItem(key);
+          return null;
+        }
+        
+        return data;
+      } catch (err) {
+        log('Error checking repo:', err);
+        return data; // Fall back to time-based cache
+      }
+    },
+    
+    set: async (key, data, user, repo) => {
+      try {
+        const response = await fetch(`https://api.github.com/repos/${user}/${repo}`);
+        const etag = response.headers.get('ETag');
+        
+        localStorage.setItem(key, JSON.stringify({
+          data,
+          timestamp: Date.now(),
+          etag
+        }));
+      } catch (err) {
+        log('Error saving cache:', err);
+        localStorage.setItem(key, JSON.stringify({
+          data,
+          timestamp: Date.now()
+        }));
+      }
+    }
   };
 
   function log(message, data) {
@@ -87,19 +142,45 @@
 
   async function fetchEvents(user, repo, limit) {
     try {
+      const cacheKey = `gh-tracker-${user}-${repo}`;
+      const cached = await cache.get(cacheKey, user, repo);
+      if (cached) {
+        log('Using cached data');
+        return cached;
+      }
+
       const url = `https://api.github.com/repos/${user}/${repo}/events?per_page=${limit}`;
       log('Fetching from:', url);
 
       const response = await fetch(url);
+      
+      // Handle rate limiting
+      const rateLimit = {
+        limit: response.headers.get('X-RateLimit-Limit'),
+        remaining: response.headers.get('X-RateLimit-Remaining'),
+        reset: new Date(response.headers.get('X-RateLimit-Reset') * 1000)
+      };
+      
+      log('Rate limit:', rateLimit);
+
       if (!response.ok) {
+        if (response.status === 403 && rateLimit.remaining === '0') {
+          return `GitHub API rate limit exceeded. Resets at ${rateLimit.reset.toLocaleString()}`;
+        }
         throw new Error(`GitHub API error: ${response.status}`);
       }
 
       const events = await response.json();
-      log('Received events:', events);
-
       const formatted = events.map(formatEvent).filter(Boolean).join('\n');
-      log('Formatted events:', formatted);
+      
+      if (formatted) {
+        await cache.set(cacheKey, formatted, user, repo);
+      }
+      
+      // Add rate limit warning if needed
+      if (parseInt(rateLimit.remaining) < 10) {
+        return `> ⚠️ GitHub API rate limit: ${rateLimit.remaining} requests remaining. Resets at ${rateLimit.reset.toLocaleString()}\n\n${formatted}`;
+      }
       
       return formatted || 'No events found';
     } catch (err) {
