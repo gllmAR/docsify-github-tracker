@@ -6,4 +6,5 @@ docsify-github-tracker
 user:gllmar
 repo:docsify-github-tracker
 limit:50
+debug:true
 ```
