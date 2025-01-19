@@ -2,53 +2,52 @@
   const defaultOptions = {
     limit: 50,
     debug: true,
-    cacheTime: 5 * 60 * 1000, // 5 minutes
-    checkInterval: 30 * 1000   // 30 seconds minimum between checks
+    cacheTime: 60 * 60 * 1000, // 1 hour cache
+    checkInterval: 30 * 1000    // 30 seconds minimum between checks
   };
 
   // Cache management
   const cache = {
+    init: () => {
+      if (!localStorage.getItem('gh-tracker-initialized')) {
+        localStorage.clear();
+        localStorage.setItem('gh-tracker-initialized', 'true');
+      }
+    },
+
     get: async (key, user, repo) => {
       const item = localStorage.getItem(key);
-      if (!item) {
-        log('No cache found for key:', key);
-        return null;
-      }
+      if (!item) return null;
       
       const cached = JSON.parse(item);
       const now = Date.now();
       
-      // Check if cache is still valid
-      if (now - cached.timestamp < defaultOptions.cacheTime) {
-        log('Using valid cache:', {
-          key,
-          age: (now - cached.timestamp) / 1000,
-          maxAge: defaultOptions.cacheTime / 1000
+      // Always return cached data during rate limit
+      if (cached.rateLimited && now < cached.rateLimitReset) {
+        log('Rate limited, using cache:', {
+          resetsIn: Math.round((cached.rateLimitReset - now) / 1000)
         });
         return cached.data;
       }
       
-      // Cache expired
-      log('Cache expired:', {
-        key,
-        age: (now - cached.timestamp) / 1000,
-        maxAge: defaultOptions.cacheTime / 1000
-      });
-      localStorage.removeItem(key);
+      // Check cache validity
+      if (now - cached.timestamp < defaultOptions.cacheTime) {
+        log('Cache hit:', key);
+        return cached.data;
+      }
+      
       return null;
     },
-    
-    set: async (key, data, user, repo) => {
+
+    set: async (key, data, user, repo, rateLimited = false, rateLimitReset = null) => {
       const cacheData = {
         data,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        rateLimited,
+        rateLimitReset
       };
       
-      log('Setting cache:', {
-        key,
-        timestamp: new Date(cacheData.timestamp).toISOString()
-      });
-      
+      log('Setting cache:', { key, rateLimited });
       localStorage.setItem(key, JSON.stringify(cacheData));
     }
   };
@@ -264,35 +263,17 @@
 
   async function fetchEvents(user, repo, limit, start, stop) {
     try {
+      cache.init();
       const cacheKey = getCacheKey(user, repo, start, stop);
       const cached = await cache.get(cacheKey, user, repo);
-      if (cached) {
-        log('Using cached data');
-        return cached;
-      }
+      if (cached) return cached;
 
-      const url = `https://api.github.com/repos/${user}/${repo}/events?per_page=${limit}`;
-      log('Fetching from:', url);
-
-      const response = await fetch(url);
+      const response = await fetch(`https://api.github.com/repos/${user}/${repo}/events?per_page=${limit}`);
       
-      // Handle rate limiting
       if (response.status === 403) {
-        const rateLimitReset = response.headers.get('X-RateLimit-Reset');
-        const resetDate = new Date(rateLimitReset * 1000);
-        const resetMessage = `Rate limit exceeded. Resets at ${resetDate.toLocaleString()}`;
-        log('Rate limit exceeded:', resetMessage);
-        
-        const error = `## GitHub API Rate Limit Exceeded
-        
-The GitHub API rate limit has been exceeded. Please try again after ${resetDate.toLocaleString()}.
-
-To avoid this:
-- Use authenticated requests
-- Cache results locally
-- Reduce request frequency`;
-
-        await cache.set(cacheKey, error, user, repo);
+        const resetTime = response.headers.get('X-RateLimit-Reset') * 1000;
+        const error = `## GitHub API Rate Limit Exceeded\n\nPlease try again after ${new Date(resetTime).toLocaleString()}`;
+        await cache.set(cacheKey, error, user, repo, true, resetTime);
         return error;
       }
 
