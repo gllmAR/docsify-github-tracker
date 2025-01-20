@@ -20,25 +20,12 @@ Include in Docsify `index.html`
 - `limit`: Number of events to fetch (default: 50)
 - `debug`: Show debug logs (default: false)
 
-### Date Filtering
-
-Filter events by date range:
-
-```githubtracker 
-user:username
-repo:repository
-start:YYYY/MM/DD
-stop:YYYY/MM/DD
-```
-
 
 ## By default
 
 ```githubtracker
 user:gllmar
 repo:docsify-github-tracker
-limit:900
-debug:true
 ```
 
 
