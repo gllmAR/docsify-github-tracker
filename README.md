@@ -1,5 +1,8 @@
 # docsify-github-tracker
 
+> GitHub activity tracker plugin for Docsify - Display repository events with date filtering
+
+
 docsify-github-tracker
 
 Include in Docsify `index.html`
@@ -8,7 +11,26 @@ Include in Docsify `index.html`
 <script src="https://gllmar.github.io/docsify-github-tracker/docsify-github-tracker.js"></script>
 ```
 
-latest first
+
+
+### Configuration
+
+- `user`: GitHub username (required)
+- `repo`: Repository name (required) 
+- `limit`: Number of events to fetch (default: 50)
+- `debug`: Show debug logs (default: false)
+
+### Date Filtering
+
+Filter events by date range:
+
+```githubtracker 
+user:username
+repo:repository
+start:YYYY/MM/DD
+stop:YYYY/MM/DD
+```
+
 
 ## By default
 
